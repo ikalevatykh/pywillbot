@@ -93,7 +93,7 @@ class Gripper3F(threading.Thread):
                 force {int} -- target force (0x00 - 0x255)
         """
         with self._lock:
-            self._command.rFRA = velocity
+            self._command.rFRA = force
 
     def move(self, width, wait=True):
         """ Move fingers
@@ -110,11 +110,11 @@ class Gripper3F(threading.Thread):
         while wait and self.moving:
             time.sleep(0.1)
 
-    def close(self, wait=True):
+    def close_gripper(self, wait=True):
         """ Close fingers """
         self.move(255, wait)
 
-    def open(self, wait, width=0):
+    def open_gripper(self, wait=True, width=0):
         """ Open fingers """
         self.move(0, wait)
 
