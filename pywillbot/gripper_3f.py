@@ -14,7 +14,7 @@ class Gripper3F(threading.Thread):
             address {str} -- gripper IP address (default: {'192.168.1.11'})
     """
 
-    def __init__(self, address='192.168.1.11'):
+    def __init__(self, address='192.168.1.11', activate=True):
         super().__init__()
         self._address = address
         self._lock = threading.Lock()
@@ -23,13 +23,40 @@ class Gripper3F(threading.Thread):
         self._command = Command()
 
         self.start()
-        self.activate()
+        if activate:
+            self.activate()
 
     @property
     def ready(self):
         """ Activation and mode change are completed """
-        with self._lock:
-            return self._status.gIMC == 0x03
+        return self._status.gIMC == 0x03
+
+    @property
+    def gripper_mode(self):
+        """Grasping mode requested
+
+        Returns:
+            0x00 - Basic mode.
+            0x01 - Pinch mode.
+            0x02 - Wide mode.
+            0x03 - Scissor mode.
+        """
+        return self._status.gMOD
+
+    @property
+    def moving(self):
+        """ Motion status """
+        return self._status.gSTA == 0x00
+
+    @property
+    def target_position(self):
+        """ Echo of the requested position (0-255) """
+        return self._status.gPRA
+
+    @property
+    def position(self):
+        """ Actual position (0-255) """
+        return self._status.gPOA
 
     def activate(self):
         """ Activate gripper """
@@ -38,44 +65,25 @@ class Gripper3F(threading.Thread):
             self._command.rGTO = 1
             self._command.rSPA = 255
             self._command.rFRA = 150
-
         while not self.ready:
             time.sleep(0.1)
 
     def change_mode(self, mode):
         """ Change gripper mode """
-        with self._lock:
-            self._command.rMOD = mode
-
+        self._command.rMOD = mode
+        while self.gripper_mode != mode:
+            time.sleep(0.05)
         while not self.ready:
-            time.sleep(0.1)
+            time.sleep(0.05)
 
     def basic_mode(self):
-        self.change_mode(0)
+        self.change_mode(0x00)
 
     def pinch_mode(self):
-        self.change_mode(1)
+        self.change_mode(0x01)
 
     def wide_mode(self):
-        self.change_mode(2)
-
-    @property
-    def moving(self):
-        """ Motion status """
-        with self._lock:
-            return self._status.gSTA == 0x00
-
-    @property
-    def target_position(self):
-        """ Echo of the requested position (0-255) """
-        with self._lock:
-            return self._status.gPRA
-
-    @property
-    def position(self):
-        """ Actual position (0-255) """
-        with self._lock:
-            return self._status.gPOA
+        self.change_mode(0x02)
 
     def set_velocity(self, velocity):
         """ Set target velocity
@@ -83,8 +91,7 @@ class Gripper3F(threading.Thread):
             Arguments:
                 velocity {int} -- target velocity (0x00 - 0x255)
         """
-        with self._lock:
-            self._command.rSPA = velocity
+        self._command.rSPA = velocity
 
     def set_force(self, force):
         """ Set target force
@@ -92,8 +99,7 @@ class Gripper3F(threading.Thread):
             Arguments:
                 force {int} -- target force (0x00 - 0x255)
         """
-        with self._lock:
-            self._command.rFRA = force
+        self._command.rFRA = force
 
     def move(self, width, wait=True):
         """ Move fingers
@@ -104,19 +110,19 @@ class Gripper3F(threading.Thread):
             Keyword Arguments:
                 wait {bool} -- wait until gripper stop (default: {True})
         """
-        with self._lock:
-            self._command.rPRA = width
-
+        self._command.rPRA = width
+        while self.target_position != width:
+            time.sleep(0.05)
         while wait and self.moving:
-            time.sleep(0.1)
+            time.sleep(0.05)
 
-    def close_gripper(self, wait=True):
+    def close_gripper(self, width=255, wait=True):
         """ Close fingers """
-        self.move(255, wait)
+        self.move(width, wait)
 
-    def open_gripper(self, wait=True, width=0):
+    def open_gripper(self, width=0, wait=True):
         """ Open fingers """
-        self.move(0, wait)
+        self.move(width, wait)
 
     def run(self):
         client = modbus_tcp.communication()
@@ -125,13 +131,12 @@ class Gripper3F(threading.Thread):
         while not self._stop_event:
             # get status
             status = client.getStatus(16)
-            time.sleep(0.05)
-
             with self._lock:
-                self._status = Status(status)
-                message = self._command.message()
-
+                self._status.from_message(status)
+            time.sleep(0.05)
             # send the most recent command
+            with self._lock:
+                message = self._command.to_message()
             client.sendCommand(message)
             time.sleep(0.05)
 
@@ -147,7 +152,20 @@ class Gripper3F(threading.Thread):
 
 class Status:
 
-    def __init__(self, status=[0] * 16):
+    def __init__(self):
+        self.gACT = 0
+        self.gMOD = 0
+        self.gGTO = 0
+        self.gIMC = 0
+        self.gSTA = 0
+        self.gFLT = 0
+        self.gDTA, self.gDTB, self.gDTC, self.gDTS = 0, 0, 0, 0
+        self.gPRA, self.gPOA, self.gCUB = 0, 0, 0
+        self.gPRB, self.gPOB, self.rFRB = 0, 0, 0
+        self.gPRC, self.gPOC, self.gCUC = 0, 0, 0
+        self.gPRS, self.gPOS, self.gCUS = 0, 0, 0
+
+    def from_message(self, status):
         self.gACT = (status[0] >> 0) & 0x01
         self.gMOD = (status[0] >> 1) & 0x03
         self.gGTO = (status[0] >> 3) & 0x01
@@ -187,11 +205,11 @@ class Command:
         self.rPRC, self.rSPC, self.rFRC = 0, 0, 0
         self.rPRS, self.rSPS, self.rFRS = 0, 0, 0
 
-    def message(self):
+    def to_message(self):
         clamp = lambda n, smallest, largest: max(smallest, min(n, largest))
 
         rACT = clamp(self.rACT, 0, 1)
-        rMOD = clamp(self.rACT, 0, 3)
+        rMOD = clamp(self.rMOD, 0, 3)
         rGTO = clamp(self.rGTO, 0, 1)
         rATR = clamp(self.rATR, 0, 1)
         rGLV = clamp(self.rGLV, 0, 1)
