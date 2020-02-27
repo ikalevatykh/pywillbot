@@ -21,14 +21,14 @@ class Gripper3F(threading.Thread):
         self._stop_event = False
         self._status = Status()
         self._command = Command()
-
+        # start communication thread
         self.start()
         if activate:
             self.activate()
 
     @property
     def ready(self):
-        """ Activation and mode change are completed """
+        """Activation and mode change are completed"""
         return self._status.gIMC == 0x03
 
     @property
@@ -50,16 +50,16 @@ class Gripper3F(threading.Thread):
 
     @property
     def target_position(self):
-        """ Echo of the requested position (0-255) """
+        """Echo of the requested position (0-255)"""
         return self._status.gPRA
 
     @property
     def position(self):
-        """ Actual position (0-255) """
+        """Actual position (0-255)"""
         return self._status.gPOA
 
     def activate(self):
-        """ Activate gripper """
+        """Activate gripper"""
         with self._lock:
             self._command.rACT = 1
             self._command.rGTO = 1
@@ -69,7 +69,7 @@ class Gripper3F(threading.Thread):
             time.sleep(0.1)
 
     def change_mode(self, mode):
-        """ Change gripper mode """
+        """Change gripper mode"""
         self._command.rMOD = mode
         while self.gripper_mode != mode:
             time.sleep(0.05)
@@ -86,29 +86,29 @@ class Gripper3F(threading.Thread):
         self.change_mode(0x02)
 
     def set_velocity(self, velocity):
-        """ Set target velocity
+        """Set target velocity
 
-            Arguments:
-                velocity {int} -- target velocity (0x00 - 0x255)
+        Arguments:
+            velocity {int} -- target velocity (0x00 - 0x255)
         """
         self._command.rSPA = velocity
 
     def set_force(self, force):
-        """ Set target force
+        """Set target force
 
-            Arguments:
-                force {int} -- target force (0x00 - 0x255)
+        Arguments:
+            force {int} -- target force (0x00 - 0x255)
         """
         self._command.rFRA = force
 
     def move(self, width, wait=True):
-        """ Move fingers
+        """Move fingers
 
-            Arguments:
-                width {int} -- fingers position (0x00 - full opening, 0x255 - full closing)
-            
-            Keyword Arguments:
-                wait {bool} -- wait until gripper stop (default: {True})
+        Arguments:
+            width {int} -- fingers position (0x00 - full opening, 0x255 - full closing)
+
+        Keyword Arguments:
+            wait {bool} -- wait until gripper stop (default: {True})
         """
         self._command.rPRA = width
         while self.target_position != width:
@@ -117,11 +117,11 @@ class Gripper3F(threading.Thread):
             time.sleep(0.05)
 
     def close_gripper(self, width=255, wait=True):
-        """ Close fingers """
+        """Close fingers"""
         self.move(width, wait)
 
     def open_gripper(self, width=0, wait=True):
-        """ Open fingers """
+        """Open fingers"""
         self.move(width, wait)
 
     def run(self):
@@ -142,11 +142,9 @@ class Gripper3F(threading.Thread):
 
         client.disconnectFromDevice()
 
-    def stop(self):
+    def disconnect(self):
+        """Close connection and join communication thread"""
         self._stop_event = True
-
-    def close(self):
-        self.stop()
         self.join()
 
 
